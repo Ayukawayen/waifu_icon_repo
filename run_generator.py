@@ -271,7 +271,7 @@ def style_mixing_example(G, args):
 #----------------------------------------------------------------------------
 
 def generate_images(G, args):
-    args.seeds = [ int('0x%s' % args.tokenid, 16) % ((1 << 31) - 1) ]
+    args.seeds = [ int('0x%s' % args.tokenid, 16) % (1 << 31) + (1 << 31) - 1 ]
     print('generating ', args.tokenid, args.seeds[0])
     latent_size, label_size = G.latent_size, G.label_size
     device = torch.device(args.gpu[0] if args.gpu else 'cpu')
@@ -327,15 +327,9 @@ def generate_images(G, args):
         images = utils.tensor_to_PIL(
             generated, pixel_min=args.pixel_min, pixel_max=args.pixel_max)
         for seed, img in zip(args.seeds[i: i + args.batch_size], images):
-            path = os.path.join(args.output, 'original', '%s.png' % args.tokenid)
+            path = os.path.join(args.output, '%s.png' % args.tokenid)
             img.save(path)
             print('saved', path)
-
-            for d in [32, 64, 128]:
-                rimg = img.resize((d, d))
-                path = os.path.join(args.output, str(d), '%s.png' % args.tokenid)
-                rimg.save(path)
-                print('saved', path)
 
 #----------------------------------------------------------------------------
 
@@ -364,7 +358,7 @@ app = Flask(__name__)
 G = stylegan2.models.load('./checkpoint/Gs.pth')
 G.eval()
 
-def load_icon(tokenid, sdir):
+def load_icon(tokenid):
     args = get_arg_parser()
     args.network = './checkpoint/Gs.pth'
     args.output = './results'
@@ -380,9 +374,6 @@ def load_icon(tokenid, sdir):
         '--output argument should specify a directory, not a file.'
     if not os.path.exists(args.output):
         os.makedirs(args.output)
-    for d in ['32', '64', '128', 'original']:
-        if not os.path.exists(os.path.join(args.output, d)):
-            os.makedirs(os.path.join(args.output, d))
     assert isinstance(G, stylegan2.models.Generator), 'Model type has to be ' + \
         'stylegan2.models.Generator. Found {}.'.format(type(G))
 
@@ -393,25 +384,13 @@ def load_icon(tokenid, sdir):
         return 'bad tokenid', 400
     wargs.tokenid = tokenid
 
-    path = os.path.join(args.output, sdir, '%s.png' % wargs.tokenid)
+    path = os.path.join(args.output, '%s.png' % wargs.tokenid)
     if not os.path.exists(path):
         print(path + ' not exist')
         generate_images(G, wargs)
 
     return send_file(path, mimetype='image/png')
 
-@app.route('/original/<tokenid>.png')
+@app.route('/<tokenid>.png')
 def icon_original(tokenid):
-    return load_icon(tokenid, 'original')
-
-@app.route('/32/<tokenid>.png')
-def icon_32(tokenid):
-    return load_icon(tokenid, '32')
-
-@app.route('/64/<tokenid>.png')
-def icon_64(tokenid):
-    return load_icon(tokenid, '64')
-
-@app.route('/128/<tokenid>.png')
-def icon_128(tokenid):
-    return load_icon(tokenid, '128')
+    return load_icon(tokenid)
