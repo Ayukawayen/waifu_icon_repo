@@ -267,11 +267,52 @@ def style_mixing_example(G, args):
                 canvas.paste(image_dict[key], (W * col_idx, H * row_idx))
         canvas.save(os.path.join(args.output, 'grid.png'))
         print('Done!')
+        
+#----------------------------------------------------------------------------
+
+def style_mix(G, args):
+    device = torch.device('cpu')
+    if device.index is not None:
+        torch.cuda.set_device(device.index)
+    G.to(device)
+    G.static_noise()
+    latent_size, label_size = G.latent_size, G.label_size
+    G_mapping, G_synthesis = G.G_mapping, G.G_synthesis
+
+    all_seeds = list(set(args.seeds))
+    all_z = torch.stack([torch.from_numpy(np.random.RandomState(seed).randn(latent_size)) for seed in all_seeds])
+    all_z = all_z.to(device=device, dtype=torch.float32)
+    
+    print('Generating disentangled latents...', flush=True)
+    with torch.no_grad():
+        all_w = G_mapping(latents=all_z, labels=None)
+
+    all_w = all_w.unsqueeze(1).repeat(1, len(G_synthesis), 1)
+
+    w_avg = G.dlatent_avg
+
+    if args.truncation_psi != 1:
+        all_w = w_avg + args.truncation_psi * (all_w - w_avg)
+
+    w_dict = {seed: w for seed, w in zip(all_seeds, all_w)}
+    print('Done!', flush=True)
+
+    print('Generating style-mixed images...', flush=True)
+    w = torch.zeros([len(G), latent_size])
+    for i in range(len(args.seeds)):
+        for li in range(len(args.seed_layers[i])):
+            if args.seed_layers[i][li] != 0 :
+                w[li] += w_dict[args.seeds[i]][li] / 15.0 * args.seed_layers[i][li]
+
+    with torch.no_grad():
+        image = G_synthesis(w.unsqueeze(0)).squeeze(0)
+    image = utils.tensor_to_PIL(image, pixel_min=args.pixel_min, pixel_max=args.pixel_max)
+    image.save(os.path.join(args.output, '%s.png' % args.tokenid))
+    print('Done!', flush=True)
 
 #----------------------------------------------------------------------------
 
 def generate_images(G, args):
-    args.seeds = [ int('0x%s' % args.tokenid, 16) % (1 << 31) + (1 << 31) - 1 ]
     print('generating ', args.tokenid, args.seeds[0])
     latent_size, label_size = G.latent_size, G.label_size
     device = torch.device(args.gpu[0] if args.gpu else 'cpu')
@@ -333,8 +374,6 @@ def generate_images(G, args):
 
 #----------------------------------------------------------------------------
 
-
-
 def main():
     args = get_arg_parser().parse_args()
     assert args.command, 'Missing subcommand.'
@@ -387,7 +426,18 @@ def load_icon(tokenid):
     path = os.path.join(args.output, '%s.png' % wargs.tokenid)
     if not os.path.exists(path):
         print(path + ' not exist')
-        generate_images(G, wargs)
+        ver = int('0x%s' % wargs.tokenid[-4:], 16)
+        if ver == 4 :
+            size = 4
+            wargs.seeds = [0]*size
+            wargs.seed_layers = [0]*size
+            for i in range(size):
+                wargs.seeds[i] = int('0x%s' % tokenid[i*12 : i*12+8], 16)
+                wargs.seed_layers[i] = [ int('0x%s' % tokenid[i*12+ 9: i*12+10], 16) ]*5 + [ int('0x%s' % tokenid[i*12+10: i*12+11], 16) ]*4 + [ int('0x%s' % tokenid[i*12+11: i*12+12], 16) ]*7
+            style_mix(G, wargs)
+        else :
+            wargs.seeds = [ int('0x%s' % wargs.tokenid[0:8], 16) ]
+            generate_images(G, wargs)
 
     return send_file(path, mimetype='image/png')
 
